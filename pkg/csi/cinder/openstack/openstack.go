@@ -77,6 +77,7 @@ type BlockStorageOpts struct {
 	NodeVolumeAttachLimit int64 `gcfg:"node-volume-attach-limit"`
 	RescanOnResize        bool  `gcfg:"rescan-on-resize"`
 	IgnoreVolumeAZ        bool  `gcfg:"ignore-volume-az"`
+	BSVersion             string `gcfg:"bs-version"`
 }
 
 type Config struct {
@@ -164,7 +165,7 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 	}
 
 	// Init Cinder ServiceClient
-	blockstorageclient, err := openstack.NewBlockStorageV3(provider, epOpts)
+	blockstorageclient, err := getBlockStorageClient(provider, epOpts, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +185,29 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 	}
 
 	return OsInstance, nil
+}
+
+func getBlockStorageClient(provider *gophercloud.ProviderClient, epOpts gophercloud.EndpointOpts, cfg Config) (*gophercloud.ServiceClient, error) {
+	switch cfg.BlockStorage.BSVersion {
+	case "v2":
+		cli, err := openstack.NewBlockStorageV2(provider, epOpts)
+		if err != nil {
+			klog.Errorf("Create BlockStorage V2 failed with error: %v", err)
+			return nil, err
+		}
+
+		klog.V(3).Info("Using BlockStorage API V2")
+		return cli, nil
+	default: // use v3 as default
+		cli, err := openstack.NewBlockStorageV3(provider, epOpts)
+		if err != nil {
+			klog.Errorf("Create BlockStorage V3 failed with error: %v", err)
+			return nil, err
+		}
+
+		klog.V(3).Info("Using BlockStorage API V3 as default")
+		return cli, nil
+	}
 }
 
 // GetOpenStackProvider returns Openstack Instance
