@@ -17,6 +17,7 @@ limitations under the License.
 package openstack
 
 import (
+	"io/ioutil"
 	"os"
 	"reflect"
 	"strings"
@@ -37,6 +38,7 @@ var fakeDomainID = "2a73b8f597c04551a0fdc8e95544be8a"
 var fakeRegion = "RegionOne"
 var fakeCAfile = "fake-ca.crt"
 var fakeCloudName = "openstack"
+var fakeBsVersion = "v3"
 
 // Test GetConfigFromFiles
 func TestGetConfigFromFiles(t *testing.T) {
@@ -51,7 +53,8 @@ domain-id=` + fakeDomainID + `
 ca-file=` + fakeCAfile + `
 region=` + fakeRegion + `
 [BlockStorage]
-rescan-on-resize=true`
+rescan-on-resize=true
+bs-version=` + fakeBsVersion
 
 	f, err := os.Create(fakeFileName)
 	if err != nil {
@@ -76,6 +79,7 @@ rescan-on-resize=true`
 	expectedOpts.Global.TenantID = fakeTenantID
 	expectedOpts.Global.Region = fakeRegion
 	expectedOpts.BlockStorage.RescanOnResize = true
+	expectedOpts.BlockStorage.BSVersion = fakeBsVersion
 
 	// Invoke GetConfigFromFiles
 	actualAuthOpts, err := GetConfigFromFiles([]string{fakeFileName})
@@ -207,6 +211,95 @@ func TestUserAgentFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBlockStorageClientV2(t *testing.T) {
+	t.Log("using cinder v2 api controlled by config file")
+
+	// init file
+	tmpFile, err := ioutil.TempFile(os.TempDir(), "csi-")
+	assert.NoError(t, err)
+
+	var fakeFileContent = `
+[Global]
+username=` + fakeUserName + `
+password=` + fakePassword + `
+auth-url=` + fakeAuthUrl + `
+tenant-id=` + fakeTenantID + `
+domain-id=` + fakeDomainID + `
+ca-file=` + fakeCAfile + `
+region=` + fakeRegion + `
+[BlockStorage]
+rescan-on-resize=true
+bs-version=v2`
+
+	_, err = tmpFile.WriteString(fakeFileContent)
+	assert.NoError(t, err)
+	_ = tmpFile.Close()
+	defer func() {
+		_ = os.Remove(tmpFile.Name())
+	}()
+
+	// patch temporary config file position for testing
+	var backup string
+	backup, configFile = configFile, tmpFile.Name()
+	defer func() {
+		configFile = backup
+	}()
+
+	// check client version,
+	provider, err := CreateOpenStackProvider()
+	if err, ok := err.(*gophercloud.ErrEndpointNotFound); ok {
+		t.Skipf("BlockStorage endpoint not supported: %v", err)
+	}
+	assert.NoError(t, err)
+
+	client := provider.(*OpenStack)
+	assert.Equal(t, "volumev2", client.blockstorage.Type)
+}
+
+// test cinder v3 as default
+func TestBlockStorageClient(t *testing.T) {
+	t.Log("using cinder v3 api as default controlled by config file")
+	// init file
+	tmpFile, err := ioutil.TempFile(os.TempDir(), "csi-")
+	assert.NoError(t, err)
+
+	var fakeFileContent = `
+[Global]
+username=` + fakeUserName + `
+password=` + fakePassword + `
+auth-url=` + fakeAuthUrl + `
+tenant-id=` + fakeTenantID + `
+domain-id=` + fakeDomainID + `
+ca-file=` + fakeCAfile + `
+region=` + fakeRegion + `
+[BlockStorage]
+rescan-on-resize=true`
+
+	_, err = tmpFile.WriteString(fakeFileContent)
+	assert.NoError(t, err)
+	_ = tmpFile.Close()
+	defer func() {
+		_ = os.Remove(tmpFile.Name())
+	}()
+
+	// patch temporary config file position for testing
+	var backup string
+	backup, configFile = configFile, tmpFile.Name()
+	defer func() {
+		configFile = backup
+	}()
+
+	// check client version,
+	provider, err := CreateOpenStackProvider()
+	if err, ok := err.(*gophercloud.ErrEndpointNotFound); ok {
+		t.Skipf("BlockStorage endpoint not supported: %v", err)
+	}
+	assert.NoError(t, err)
+
+	client := provider.(*OpenStack)
+	assert.Equal(t, "volumev3", client.blockstorage.Type)
 }
 
 func clearEnviron(t *testing.T) []string {
